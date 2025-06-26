@@ -466,7 +466,7 @@ def _tag_edges(edge_gdf, tolerance=1.0):
 
 
 def efficient_node_insertion(n_node_gdf: GeoDataFrame, n_edge_gdf: GeoDataFrame, source_gdf: GeoDataFrame,
-                             layer_name: str, label: str = "origin", weight_attribute: str = None):
+                             layer_name: str, label: str = "origin", weight_attribute: str = None, known_od_id_col: str = None):
     # Assigning nodes to edges using a spatial index
     # TODO: CHECK IF THESE AR EPOINTS, IF POLYGONS, USE THEIR CENTRPIOD
     match = n_edge_gdf["geometry"].sindex.nearest(source_gdf["geometry"], return_all=False)
@@ -497,21 +497,25 @@ def efficient_node_insertion(n_node_gdf: GeoDataFrame, n_edge_gdf: GeoDataFrame,
     index = pd.Index(node_ids, name="id")
     node_weight = np.ones(node_count, dtype=np.float64) if weight_attribute is None else source_gdf[
         weight_attribute].values
+    node_gdf_dict = {
+        "source_layer": pd.Series(np.repeat(np.array([layer_name], dtype=object), repeats=node_count),
+                                  fastpath=True, index=index, dtype="category"),
+        "source_id": pd.Series(node_source_ids, fastpath=True, index=index, dtype=np.int32),
+        "type": pd.Series(np.repeat(np.array([label], dtype=object), repeats=node_count), fastpath=True,
+                          index=index, dtype="category"),
+        "weight": pd.Series(node_weight, fastpath=True, index=index, dtype=np.float32),
+        "nearest_edge_id": pd.Series(closest_edge_ids, fastpath=True, index=index, dtype=np.int32),
+        "edge_start_node": pd.Series(closest_edge_starts, fastpath=True, index=index, dtype=np.int32),
+        "weight_to_start": pd.Series(weight_to_start, fastpath=True, index=index, dtype=np.float32),
+        "edge_end_node": pd.Series(closest_edge_ends, fastpath=True, index=index, dtype=np.int32),
+        "weight_to_end": pd.Series(weight_to_end, fastpath=True, index=index, dtype=np.float32),
+        "degree": pd.Series(np.zeros(node_count, dtype=np.int32), fastpath=True, index=index),
+    }
+    # Add Known_OD_ID column if requested and present in source_gdf
+    if known_od_id_col is not None and known_od_id_col in source_gdf.columns:
+        node_gdf_dict[known_od_id_col] = source_gdf[known_od_id_col].values
     node_gdf = gpd.GeoDataFrame(
-        {
-            "source_layer": pd.Series(np.repeat(np.array([layer_name], dtype=object), repeats=node_count),
-                                      fastpath=True, index=index, dtype="category"),
-            "source_id": pd.Series(node_source_ids, fastpath=True, index=index, dtype=np.int32),
-            "type": pd.Series(np.repeat(np.array([label], dtype=object), repeats=node_count), fastpath=True,
-                              index=index, dtype="category"),
-            "weight": pd.Series(node_weight, fastpath=True, index=index, dtype=np.float32),
-            "nearest_edge_id": pd.Series(closest_edge_ids, fastpath=True, index=index, dtype=np.int32),
-            "edge_start_node": pd.Series(closest_edge_starts, fastpath=True, index=index, dtype=np.int32),
-            "weight_to_start": pd.Series(weight_to_start, fastpath=True, index=index, dtype=np.float32),
-            "edge_end_node": pd.Series(closest_edge_ends, fastpath=True, index=index, dtype=np.int32),
-            "weight_to_end": pd.Series(weight_to_end, fastpath=True, index=index, dtype=np.float32),
-            "degree": pd.Series(np.zeros(node_count, dtype=np.int32), fastpath=True, index=index),
-        },
+        node_gdf_dict,
         index=index,
         crs=source_gdf.crs,
         geometry=pd.Series(point_on_nearest_edge, fastpath=True, index=index)

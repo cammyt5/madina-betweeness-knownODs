@@ -443,7 +443,8 @@ def betweenness_exposure(
         turn_penalty=False,
         path_exposure_attribute=None,
         return_path_record=False, 
-        destniation_cap=None
+        destniation_cap=None,
+        known_od_id=None,
 ):
     edge_gdf = self.network.edges
     node_gdf = self.network.nodes
@@ -523,17 +524,56 @@ def betweenness_exposure(
             o_graph = self.network.d_graph
             self.network.add_node_to_graph(o_graph, origin_idx)
 
-            d_idxs, o_scope, o_scope_paths = turn_o_scope(
-                network=self.network,
-                o_idx=origin_idx,
-                search_radius=search_radius,
-                detour_ratio=detour_ratio,
-                turn_penalty=turn_penalty,
-                o_graph=o_graph,
-                return_paths=True
-            )
+            if known_od_id is not None:
+                # Get the value for this origin
+                origin_value = node_gdf.at[origin_idx, known_od_id] if known_od_id in node_gdf.columns else None
+                # Find the destination node with the same value in the same field
+                destination_gdf = node_gdf[node_gdf['type'] == 'destination']
+                if origin_value is not None and not pd.isna(origin_value):
+                    matching_dest = destination_gdf[destination_gdf[known_od_id] == origin_value]
+                    if not matching_dest.empty:
+                        dest_idx = matching_dest.index[0]
+                        # Use turn_o_scope to get the real network distance
+                        d_idxs_tmp, o_scope, o_scope_paths = turn_o_scope(
+                            network=self.network,
+                            o_idx=origin_idx,
+                            search_radius=1e12,  # very large
+                            detour_ratio=detour_ratio,
+                            turn_penalty=turn_penalty,
+                            o_graph=o_graph,
+                            return_paths=True
+                        )
+                        if dest_idx in d_idxs_tmp:
+                            d_idxs = {dest_idx: d_idxs_tmp[dest_idx]}
+                        else:
+                            d_idxs = {}
+                        _search_radius = 1e12
+                    else:
+                        d_idxs = {}
+                        o_scope = {}
+                        o_scope_paths = {}
+                        _search_radius = search_radius
+                else:
+                    d_idxs = {}
+                    o_scope = {}
+                    o_scope_paths = {}
+                    _search_radius = search_radius
+            else:
+                _search_radius = search_radius
+
+                d_idxs, o_scope, o_scope_paths = turn_o_scope(
+                    network=self.network,
+                    o_idx=origin_idx,
+                    search_radius=_search_radius,
+                    detour_ratio=detour_ratio,
+                    turn_penalty=turn_penalty,
+                    o_graph=o_graph,
+                    return_paths=True
+                )
+
             destination_discovery_time = time.time() - start
             start = time.time()
+
         except Exception as ex:
             print (f"CORE: {core_index}: [betweenness_exposure]: error generating path for origin {origin_idx = }, {len(processed_origins) = }")
             print(str(ex))
@@ -550,6 +590,7 @@ def betweenness_exposure(
             # skip this origin if cannot reach any destination
             if len(d_idxs) == 0:
                 self.network.remove_node_to_graph(o_graph, origin_idx)
+                print(f"origin_idx: {origin_idx} has no destinations")
                 origin_queue.task_done()
                 continue
             
@@ -887,6 +928,7 @@ def betweenness_exposure(
             del path_edges, weights
             del path_detour_penalties, d_path_weights, path_probabilities, path_decays, destination_path_probabilies, betweennes_contributions
             self.network.remove_node_to_graph(o_graph, origin_idx)
+            print(f"origin_idx: {origin_idx} successful")
             origin_queue.task_done()
         except:
             print (f"CORE: {core_index}: [betweenness_exposure]: error marking task done {origin_idx = } , {len(processed_origins) = }, proceeding to next task")
@@ -914,7 +956,8 @@ def paralell_betweenness_exposure(
     turn_penalty=False,
     path_exposure_attribute=None,
     return_path_record=False, 
-    destniation_cap=None
+    destniation_cap=None,
+    known_od_id=None,
     ):
     node_gdf = self.network.nodes
     edge_gdf = self.network.edges
@@ -971,7 +1014,8 @@ def paralell_betweenness_exposure(
                     turn_penalty=turn_penalty,
                     path_exposure_attribute=path_exposure_attribute,
                     return_path_record=return_path_record, 
-                    destniation_cap=destniation_cap
+                    destniation_cap=destniation_cap,
+                    known_od_id=known_od_id,
                 ))
 
             start = time.time()

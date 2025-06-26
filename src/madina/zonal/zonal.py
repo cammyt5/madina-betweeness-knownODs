@@ -252,7 +252,8 @@ class Zonal:
             self,
             layer_name: str,
             label: str,
-            weight_attribute: str = None
+            weight_attribute: str = None,
+            known_od_id_col: str = None
         ) -> None:
         """Insert "origin" and "destination" nodes into the network. This function must be called aftet the 'create_street_network' function is called, and the corresponding layer have already been loaded by calling 'load_layer'
 
@@ -262,6 +263,8 @@ class Zonal:
         :type label: str
         :param weight_attribute: Name of the attribute to use as the node's weight. Default is None. If no weight is given, all nodes are weighted equally (Assigned a weight of 1). The attribute name must exist in the layer.
         :type weight_attribute: str, optional
+        :param known_od_id_col: Name of the attribute to use as the node's known_od_id. Default is None. If no known_od_id is given, all nodes are assigned a default known_od_id. The attribute name must exist in the layer.
+        :type known_od_id_col: str, optional
         :Example:
             >>> shaqra = Zonal()  # Create a Zonal object.
             >>> shaqra.load_layer('streets', 'streets.geojson') # load streets layer
@@ -296,7 +299,8 @@ class Zonal:
             source_gdf, 
             layer_name=layer_name, 
             label=label,
-            weight_attribute=weight_attribute
+            weight_attribute=weight_attribute,
+            known_od_id_col=known_od_id_col
         )
 
 

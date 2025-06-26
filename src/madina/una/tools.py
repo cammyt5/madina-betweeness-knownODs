@@ -454,6 +454,7 @@ def betweenness(
     keep_diagnostics: bool = False, 
     path_exposure_attribute: str = None,
     save_path_exposure_as: str = None,
+    known_od_id: str = None,
 ):
     """Generate trips between origins and destinations along network segment, accounting for a search radius, decay, detour, destination competition, turn penalty and elastic trip generation.
 
@@ -495,6 +496,7 @@ def betweenness(
     :type path_exposure_attribute: str, optional 
     :param save_path_exposure_as: if path exposure attribute is proviided, this is a name for a column in the origin layer that captures origin's exposure to the network exposure attribute, defaults to None
     :type save_path_exposure_as: str, optional
+    :param known_od_id: If provided, only consider the destination with the matching id in this field for each origin. If None, normal behavior. Defaults to None.
     """
 
     validate_zonal_ready(zonal)
@@ -608,6 +610,7 @@ def betweenness(
         path_exposure_attribute=path_exposure_attribute,
         return_path_record=False, 
         destniation_cap=None, 
+        known_od_id=known_od_id,
     )
 
     if save_betweenness_as is not None:

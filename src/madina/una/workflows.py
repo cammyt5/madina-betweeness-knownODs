@@ -370,15 +370,22 @@ def betweenness_flow_simulation(
 
         
 
+        # Determine if Known_OD_ID is present and not blank
+        known_od_id_col = None
+        if 'Known_OD_ID' in pairing and pd.notna(pairing['Known_OD_ID']) and str(pairing['Known_OD_ID']).strip() != '':
+            known_od_id_col = pairing['Known_OD_ID']
+
         shaqra.insert_node(
             layer_name=pairing['Origin_Name'], 
             label='origin', 
-            weight_attribute=pairing['Origin_Weight'] if pairing['Origin_Weight'] != "Count" else None
+            weight_attribute=pairing['Origin_Weight'] if pairing['Origin_Weight'] != "Count" else None,
+            known_od_id_col=known_od_id_col
         )
         shaqra.insert_node(
             layer_name=pairing['Destination_Name'], 
             label='destination', 
-            weight_attribute=pairing['Destination_Weight'] if pairing['Destination_Weight'] != "Count" else None
+            weight_attribute=pairing['Destination_Weight'] if pairing['Destination_Weight'] != "Count" else None,
+            known_od_id_col=known_od_id_col
         )
 
         logger.log("Origins and Destinations Inserted.", pairing)
@@ -386,8 +393,6 @@ def betweenness_flow_simulation(
         shaqra.create_graph()
 
         logger.log("NetworkX Graphs Created.", pairing)
-
-
 
         betweenness(
             zonal=shaqra,
@@ -403,12 +408,13 @@ def betweenness_flow_simulation(
             knn_plateau=pairing['Plateau'], 
             turn_penalty=pairing['Turns'],
             save_betweenness_as=pairing['Flow_Name'], 
-            save_reach_as='reach_'+pairing['Flow_Name'], 
-            save_gravity_as='gravity_'+pairing['Flow_Name'],
+            save_reach_as='reach_'+pairing['Flow_Name'] if known_od_id_col is None else None, 
+            save_gravity_as='gravity_'+pairing['Flow_Name'] if known_od_id_col is None else None,
             save_elastic_weight_as='elastic_weight_'+pairing['Flow_Name'] if pairing['Elastic_Weights'] else None,
             keep_diagnostics=True, 
             path_exposure_attribute=pairing['Exposure_Attribute']  if 'Exposure_Attribute' in pairing.index else None,
-            save_path_exposure_as="exposure_"+pairing['Flow_Name'] if 'Exposure_Attribute' in pairing.index else None,
+            save_path_exposure_as="exposure_"+pairing['Flow_Name'] if (known_od_id_col is None and 'Exposure_Attribute' in pairing.index) else None,
+            known_od_id=known_od_id_col,
         )
 
 
