@@ -415,6 +415,7 @@ def betweenness_flow_simulation(
             path_exposure_attribute=pairing['Exposure_Attribute']  if 'Exposure_Attribute' in pairing.index else None,
             save_path_exposure_as="exposure_"+pairing['Flow_Name'] if (known_od_id_col is None and 'Exposure_Attribute' in pairing.index) else None,
             known_od_id=known_od_id_col,
+            path_cap=pairing.get('Path_Cap', 3),  # Get from pairing table, default to 3
         )
 
 

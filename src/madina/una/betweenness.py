@@ -25,7 +25,7 @@ from sys import getsizeof
 
 from ..zonal import Zonal
 from ..zonal import Network
-from .paths import path_generator, turn_o_scope, bfs_subgraph_generation, wandering_messenger
+from .paths import path_generator, turn_o_scope, bfs_subgraph_generation, wandering_messenger, dfs_paths_within_detour, yens_k_shortest_paths
 
 def parallel_betweenness(
     network: Network,
@@ -445,6 +445,7 @@ def betweenness_exposure(
         return_path_record=False, 
         destniation_cap=None,
         known_od_id=None,
+        path_cap=3,
 ):
     edge_gdf = self.network.edges
     node_gdf = self.network.nodes
@@ -485,6 +486,8 @@ def betweenness_exposure(
             if origin_idx == "done":
                 origin_queue.task_done()
                 break
+            print(f"origin_idx: {origin_idx} starting")
+
             processed_origins.append(origin_idx)
 
             #if len(processed_origins)%100 == 0:
@@ -533,11 +536,21 @@ def betweenness_exposure(
                     matching_dest = destination_gdf[destination_gdf[known_od_id] == origin_value]
                     if not matching_dest.empty:
                         dest_idx = matching_dest.index[0]
+                        
+                        # Calculate straight-line distance between origin and destination
+                        origin_geom = node_gdf.at[origin_idx, 'geometry']
+                        dest_geom = node_gdf.at[dest_idx, 'geometry']
+                        straight_line_distance = origin_geom.distance(dest_geom)
+                        print(f"origin_idx: {origin_idx}, pair value: {origin_value}, straight_line_distance: {straight_line_distance}")
+
+                        # Set search radius to twice the straight-line distance
+                        _search_radius = straight_line_distance * 2
+                        
                         # Use turn_o_scope to get the real network distance
                         d_idxs_tmp, o_scope, o_scope_paths = turn_o_scope(
                             network=self.network,
                             o_idx=origin_idx,
-                            search_radius=1e12,  # very large
+                            search_radius=_search_radius,
                             detour_ratio=detour_ratio,
                             turn_penalty=turn_penalty,
                             o_graph=o_graph,
@@ -547,7 +560,6 @@ def betweenness_exposure(
                             d_idxs = {dest_idx: d_idxs_tmp[dest_idx]}
                         else:
                             d_idxs = {}
-                        _search_radius = 1e12
                     else:
                         d_idxs = {}
                         o_scope = {}
@@ -716,16 +728,40 @@ def betweenness_exposure(
                 for d_idx in d_idx_chunck.keys():
                     d_allowed_distances[d_idx] =  d_idx_chunck[d_idx] * detour_ratio
 
-                path_edges, weights = wandering_messenger(
-                #path_edges, weights = bfs_path_edges_many_targets_iterative(
-                    network=self.network,
-                    o_graph=o_graph,
-                    o_idx=origin_idx,
-                    d_idxs=d_allowed_distances,
-                    distance_matrix=distance_matrix,
-                    turn_penalty=turn_penalty,
-                    od_scope=scope_nodes
-                )
+                # if known_od_id is not None:
+                #     assert len(d_idxs) == 1, "Only one destination is allowed when known_od_id is provided"
+                #     for d_idx in d_idxs.keys():
+                #         path_edges, weights = dfs_paths_within_detour(
+                #             o_graph=o_graph,
+                #             source=origin_idx,
+                #             target=d_idx,
+                #             max_weight=d_allowed_distances[d_
+                print(f"origin_idx: {origin_idx} size of o_scope: {len(o_scope)}")
+                
+                # Use Yen's algorithm if known_od_id is provided, otherwise use wandering_messenger
+                if known_od_id is not None:
+                    path_edges, weights = yens_k_shortest_paths(
+                        network=self.network,
+                        o_graph=o_graph,
+                        o_idx=origin_idx,
+                        d_idxs=d_allowed_distances,
+                        distance_matrix=distance_matrix,
+                        turn_penalty=turn_penalty,
+                        od_scope=scope_nodes,
+                        k=path_cap,
+                        detour_ratio=detour_ratio
+                    )
+                else:
+                    path_edges, weights = wandering_messenger(
+                    #path_edges, weights = bfs_path_edges_many_targets_iterative(
+                        network=self.network,
+                        o_graph=o_graph,
+                        o_idx=origin_idx,
+                        d_idxs=d_allowed_distances,
+                        distance_matrix=distance_matrix,
+                        turn_penalty=turn_penalty,
+                        od_scope=scope_nodes
+                    )
 
                 #Diagnostics
                 chunck_path_count.append(sum([len(dest_paths) for dest_paths in path_edges.values()]))
@@ -821,7 +857,8 @@ def betweenness_exposure(
                     probable_travel_distance += (destination_path_probabilies * path_decays * d_path_weights).sum()
 
                     if len(d_path_weights[d_path_weights > (d_idx_chunck[destination_idx] * detour_ratio)+ 0.01]) > 0:
-                        print(f"SOme paths exceeded allowed tolerance: {d_path_weights[d_path_weights > (d_idx_chunck[destination_idx] * detour_ratio)+ 0.01]}")
+                        print(f"o_idx: {origin_idx}, d_idx: {destination_idx}, Some paths exceeded allowed tolerance: {d_path_weights[d_path_weights > (d_idx_chunck[destination_idx] * detour_ratio)+ 0.01]}")
+                        # print(f"SOme paths exceeded allowed tolerance: {d_path_weights[d_path_weights > (d_idx_chunck[destination_idx] * detour_ratio)+ 0.01]}")
 
                 except Exception as ex:
                     print (f"CORE: {core_index}: [betweenness_exposure]: error generating path probabilities, decay,  betweenness for origin {origin_idx = } destination {destination_idx = }, {len(processed_origins) = }, skipping destination")
@@ -958,6 +995,7 @@ def paralell_betweenness_exposure(
     return_path_record=False, 
     destniation_cap=None,
     known_od_id=None,
+    path_cap=3,
     ):
     node_gdf = self.network.nodes
     edge_gdf = self.network.edges
@@ -1016,6 +1054,7 @@ def paralell_betweenness_exposure(
                     return_path_record=return_path_record, 
                     destniation_cap=destniation_cap,
                     known_od_id=known_od_id,
+                    path_cap=path_cap,
                 ))
 
             start = time.time()

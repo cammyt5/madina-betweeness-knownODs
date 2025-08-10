@@ -1,4 +1,5 @@
 import math
+import networkx as nx
 from collections import deque
 from heapq import heappush, heappop
 from ..zonal import Network
@@ -262,7 +263,6 @@ def bfs_paths_many_targets_iterative(
             q.appendleft((visited + [neighbor], neighbor, neighbor_targets_remaining, neighbor_current_weight))
     return paths, distances
 
-import networkx as nx
 def wandering_messenger(
     network: Network,
     o_graph,
@@ -280,8 +280,9 @@ def wandering_messenger(
     path_diary =  [(o_idx, [], [], [], 0)] # (source, source_visited, source_visited_targets, source_visited_edges, source_weight)
     path_tree = deque([(o_neighbor, 0) for o_neighbor in graph_dict[o_idx]])
 
-
+    iteration_count = 0
     while path_tree:
+        iteration_count += 1
         node, source_diary_page = path_tree.pop()
         (source, source_visited, source_visited_targets, source_visited_edges, source_weight) = path_diary[source_diary_page]
 
@@ -317,7 +318,7 @@ def wandering_messenger(
                 break # break after finding one remaining target and doing neibor queuing
 
 
-
+    print(f"oidx: {o_idx = } iteration_count: {iteration_count = }")
 
 
     return path_edges, distances
@@ -535,3 +536,314 @@ def angle_deviation_between_two_lines(point_sequence, raw_angle=False):
         ang = abs(round(ang) - 180)
 
         return ang
+
+def dfs_paths_within_detour(o_graph, source, target, max_weight):
+    """
+    Returns:
+        path_edges: dict[target] = list of edge-id lists for each path
+        distances: dict[target] = list of path weights
+    """
+    path_edges = {target: []}
+    distances = {target: []}
+    stack = [(source, [source], [], 0.0)]  # (node, path, edge_ids, weight)
+    while stack:
+        (node, path, edge_ids, weight) = stack.pop()
+        if node == target and weight <= max_weight:
+            path_edges[target].append(edge_ids)
+            distances[target].append(weight)
+        for neighbor in o_graph.neighbors(node):
+            if neighbor not in path:  # avoid cycles
+                edge_data = o_graph.edges[node, neighbor]
+                edge_weight = edge_data['weight']
+                edge_id = edge_data['id']
+                new_weight = weight + edge_weight
+                if new_weight <= max_weight:
+                    stack.append((neighbor, path + [neighbor], edge_ids + [edge_id], new_weight))
+    return path_edges, distances
+
+def yens_k_shortest_paths(
+    network: Network,
+    o_graph,
+    o_idx,
+    d_idxs,
+    distance_matrix=None,
+    turn_penalty=False,
+    od_scope=None,
+    k=3,
+    detour_ratio=2.0
+):
+    """
+    Implements Yen's k-Shortest Paths algorithm.
+    
+    Args:
+        network: Network object
+        o_graph: Origin graph
+        o_idx: Origin node index
+        d_idxs: Dictionary of destination indices and their shortest path distances
+        distance_matrix: Pre-computed distance matrix
+        turn_penalty: Whether to apply turn penalties
+        od_scope: Set of nodes in origin-destination scope
+        k: Number of shortest paths to find for each destination
+        detour_ratio: Maximum allowed detour ratio (default: 2.0)
+    
+    Returns:
+        path_edges: dict[d_idx] = deque of edge-id lists for each path
+        distances: dict[d_idx] = deque of path weights
+    """
+    
+    path_edges = {d_idx: deque([]) for d_idx in d_idxs}
+    distances = {d_idx: deque([]) for d_idx in d_idxs}
+    
+    # Convert graph to NetworkX format for easier manipulation
+    graph_dict = nx.to_dict_of_dicts(o_graph, nodelist=od_scope)
+    
+    def dijkstra_shortest_path(source, target, excluded_edges=None):
+        """
+        Find shortest path from source to target using Dijkstra's algorithm.
+        Excludes specified edges if provided.
+        """
+        if excluded_edges is None:
+            excluded_edges = set()
+            
+        distances = {node: float('inf') for node in graph_dict}
+        distances[source] = 0
+        predecessors = {node: None for node in graph_dict}
+        pq = [(0, source)]
+        visited = set()
+        
+        while pq:
+            current_dist, current_node = heappop(pq)
+            
+            if current_node in visited:
+                continue
+            visited.add(current_node)
+            
+            if current_node == target:
+                break
+                
+            for neighbor, edge_data in graph_dict[current_node].items():
+                if neighbor in visited:
+                    continue
+                    
+                # Check if this edge should be excluded
+                edge_id = edge_data.get('id', None)
+                if edge_id in excluded_edges:
+                    continue
+                    
+                # Calculate turn penalty if needed
+                turn_cost = 0
+                if turn_penalty and predecessors[current_node] is not None:
+                    prev_node = predecessors[current_node]
+                    turn_cost = turn_penalty_value(network, prev_node, current_node, neighbor)
+                
+                edge_weight = edge_data['weight'] + turn_cost
+                new_dist = current_dist + edge_weight
+                
+                if new_dist < distances[neighbor]:
+                    distances[neighbor] = new_dist
+                    predecessors[neighbor] = current_node
+                    heappush(pq, (new_dist, neighbor))
+        
+        # Reconstruct path
+        if distances[target] == float('inf'):
+            return None, [], float('inf')
+            
+        path = []
+        edge_ids = []
+        current = target
+        
+        while current is not None:
+            path.append(current)
+            current = predecessors[current]
+        
+        path.reverse()
+        
+        # Extract edge IDs
+        for i in range(len(path) - 1):
+            edge_id = graph_dict[path[i]][path[i + 1]].get('id', None)
+            if edge_id is not None:
+                edge_ids.append(edge_id)
+        
+        return path, edge_ids, distances[target]
+    
+    def find_shortest_path_with_constraints(source, target, excluded_edges=None, excluded_nodes=None):
+        """
+        Find shortest path with edge and node exclusions.
+        """
+        if excluded_nodes is None:
+            excluded_nodes = set()
+            
+        # Create a temporary graph without excluded nodes
+        temp_graph = {}
+        for node, neighbors in graph_dict.items():
+            if node not in excluded_nodes:
+                temp_graph[node] = {n: data for n, data in neighbors.items() 
+                                  if n not in excluded_nodes}
+        
+        # Use a simplified version for the constrained search
+        distances = {node: float('inf') for node in temp_graph}
+        distances[source] = 0
+        predecessors = {node: None for node in temp_graph}
+        pq = [(0, source)]
+        visited = set()
+        
+        while pq:
+            current_dist, current_node = heappop(pq)
+            
+            if current_node in visited:
+                continue
+            visited.add(current_node)
+            
+            if current_node == target:
+                break
+                
+            for neighbor, edge_data in temp_graph[current_node].items():
+                if neighbor in visited:
+                    continue
+                    
+                # Check if this edge should be excluded
+                edge_id = edge_data.get('id', None)
+                if excluded_edges and edge_id in excluded_edges:
+                    continue
+                    
+                # Calculate turn penalty if needed
+                turn_cost = 0
+                if turn_penalty and predecessors[current_node] is not None:
+                    prev_node = predecessors[current_node]
+                    turn_cost = turn_penalty_value(network, prev_node, current_node, neighbor)
+                
+                edge_weight = edge_data['weight'] + turn_cost
+                new_dist = current_dist + edge_weight
+                
+                if new_dist < distances[neighbor]:
+                    distances[neighbor] = new_dist
+                    predecessors[neighbor] = current_node
+                    heappush(pq, (new_dist, neighbor))
+        
+        # Reconstruct path
+        if distances[target] == float('inf'):
+            return None, [], float('inf')
+            
+        path = []
+        edge_ids = []
+        current = target
+        
+        while current is not None:
+            path.append(current)
+            current = predecessors[current]
+        
+        path.reverse()
+        
+        # Extract edge IDs
+        for i in range(len(path) - 1):
+            edge_id = temp_graph[path[i]][path[i + 1]].get('id', None)
+            if edge_id is not None:
+                edge_ids.append(edge_id)
+        
+        return path, edge_ids, distances[target]
+    
+    # For each destination, find k shortest paths
+    for d_idx in d_idxs:
+        if d_idx not in od_scope:
+            continue
+            
+        # Find the first shortest path
+        first_path, first_edges, first_weight = dijkstra_shortest_path(o_idx, d_idx)
+        
+        if first_path is None:
+            continue
+            
+        # Check if the path meets the detour ratio constraint
+        if first_weight > d_idxs[d_idx] * detour_ratio + 0.01:
+            continue
+            
+        # Add the first path
+        path_edges[d_idx].append(first_edges)
+        distances[d_idx].append(first_weight)
+        
+        # Priority queue to store candidate paths
+        candidates = []
+        
+        # For each node in the first path (except the last), find alternative paths
+        for i in range(len(first_path) - 1):
+            # Stop if we already have enough candidates
+            if len(candidates) >= k:
+                break
+                
+            spur_node = first_path[i]
+            root_path = first_path[:i + 1]
+            root_edges = first_edges[:i] if i > 0 else []
+
+            # Exclude the next edge of all previous paths that share this root
+            excluded_edges = set()
+            for prev_edges in path_edges[d_idx]:
+                prev_path = [o_idx]
+                for eid in prev_edges:
+                    # reconstruct path from edge ids (requires mapping edge ids to nodes)
+                    # but for now, just use the edge sequence
+                    pass
+                if list(prev_edges[:i]) == root_edges:
+                    if i < len(prev_edges):
+                        excluded_edges.add(prev_edges[i])
+
+            excluded_nodes = set(root_path[:-1]) - {d_idx}
+
+            spur_path, spur_edges, spur_weight = find_shortest_path_with_constraints(
+                spur_node, d_idx, excluded_edges, excluded_nodes
+            )
+
+            if spur_path is not None and len(spur_edges) > 0:
+                total_edges = root_edges + spur_edges
+                total_weight = 0 # This needs to be calculated based on the root path
+                for j in range(len(root_path) - 1):
+                    edge_weight = graph_dict[root_path[j]][root_path[j + 1]]['weight']
+                    turn_cost = 0
+                    if turn_penalty and j > 0:
+                        turn_cost = turn_penalty_value(network, root_path[j - 1], root_path[j], root_path[j + 1])
+                    total_weight += edge_weight + turn_cost
+                total_weight += spur_weight
+                
+                # Check detour ratio constraint
+                if total_weight <= d_idxs[d_idx] * detour_ratio + 0.01:
+                    # Check if this candidate is unique before adding
+                    is_duplicate = False
+                    for existing_weight, existing_edges in candidates:
+                        if list(existing_edges) == list(total_edges):
+                            is_duplicate = True
+                            break
+                    
+                    if not is_duplicate:
+                        heappush(candidates, (total_weight, total_edges))
+        
+        # Find remaining k-1 shortest paths
+        paths_found = 1
+        # print(f"candidates: {len(candidates)}")
+        #if candidates:
+            #print(f"First candidate: weight={candidates[0][0]}, edges={candidates[0][1]}")
+
+        while paths_found < k and candidates:
+            current_weight, current_edges = heappop(candidates)
+            
+            # Check if this path is already found by comparing edge lists
+            path_already_found = False
+            for existing_edges in path_edges[d_idx]:
+                if list(existing_edges) == list(current_edges):
+                    path_already_found = True
+                    break
+            
+            if not path_already_found:
+                path_edges[d_idx].append(current_edges)
+                distances[d_idx].append(current_weight)
+                paths_found += 1
+                #print(f"Added path {paths_found}: weight={current_weight}, edges={current_edges}")
+            #else:
+                #print(f"Skipped duplicate path: weight={current_weight}, edges={current_edges}")
+            
+            # Stop if we have found k paths
+            if paths_found >= k:
+                break
+
+        print(f"o_idx: {o_idx}, paths_found: {paths_found}")
+    #print(f"path_edges: {path_edges}")
+    #print(f"distances: {distances}")
+    return path_edges, distances

@@ -455,6 +455,7 @@ def betweenness(
     path_exposure_attribute: str = None,
     save_path_exposure_as: str = None,
     known_od_id: str = None,
+    path_cap: int = 3,
 ):
     """Generate trips between origins and destinations along network segment, accounting for a search radius, decay, detour, destination competition, turn penalty and elastic trip generation.
 
@@ -497,6 +498,8 @@ def betweenness(
     :param save_path_exposure_as: if path exposure attribute is proviided, this is a name for a column in the origin layer that captures origin's exposure to the network exposure attribute, defaults to None
     :type save_path_exposure_as: str, optional
     :param known_od_id: If provided, only consider the destination with the matching id in this field for each origin. If None, normal behavior. Defaults to None.
+    :param path_cap: When known_od_id is provided, this specifies the maximum number of shortest paths to find between each origin-destination pair using Yen's algorithm. Defaults to 3.
+    :type path_cap: int, optional
     """
 
     validate_zonal_ready(zonal)
@@ -592,6 +595,11 @@ def betweenness(
         if path_exposure_attribute is None:
             raise ValueError(f"Parameter 'path_exposure_attribute' must be provided if `save_path_exposure_as` is provided")
 
+    if not isinstance(path_cap, int):
+        raise TypeError(f"Parameter 'path_cap' must be an integer. {type(path_cap)} was given.")
+    elif path_cap < 1:
+        raise ValueError(f"Parameter 'path_cap': Cannot be less than 1. path_cap={path_cap} was given.")
+
     zonal.network.knn_weight = knn_weight
     zonal.network.knn_plateau = knn_plateau
 
@@ -611,6 +619,7 @@ def betweenness(
         return_path_record=False, 
         destniation_cap=None, 
         known_od_id=known_od_id,
+        path_cap=path_cap,
     )
 
     if save_betweenness_as is not None:
