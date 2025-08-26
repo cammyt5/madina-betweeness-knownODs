@@ -2,6 +2,8 @@ import math
 from collections import deque
 from heapq import heappush, heappop
 from ..zonal import Network
+from itertools import count
+import networkx as nx
 
 
 def path_generator(network: Network, o_idx, search_radius=800, detour_ratio=1.15, turn_penalty=False):
@@ -535,3 +537,214 @@ def angle_deviation_between_two_lines(point_sequence, raw_angle=False):
         ang = abs(round(ang) - 180)
 
         return ang
+
+def yens_k_shortest_paths(
+    network: Network,
+    o_graph,
+    o_idx,
+    d_idxs,
+    distance_matrix=None,
+    turn_penalty=False,
+    od_scope=None,
+    k=3,
+    detour_ratio=2.0
+):
+    """
+    Implements Yen's k-Shortest Paths algorithm.
+    
+    Args:
+        network: Network object
+        o_graph: Origin graph
+        o_idx: Origin node index
+        d_idxs: Dictionary of destination indices and their shortest path distances
+        distance_matrix: Pre-computed distance matrix
+        turn_penalty: Whether to apply turn penalties
+        od_scope: Set of nodes in origin-destination scope
+        k: Number of shortest paths to find for each destination
+        detour_ratio: Maximum allowed detour ratio (default: 2.0)
+    
+    Returns:
+        path_edges: dict[d_idx] = deque of edge-id lists for each path
+        distances: dict[d_idx] = deque of path weights
+    """
+    
+    def get_path_length(G, path, weight='weight'):
+        """Calculate the total length of a path in the graph."""
+        length = 0
+        if len(path) > 1:
+            for i in range(len(path) - 1):
+                u = path[i]
+                v = path[i + 1]
+                length += G[u][v].get(weight, 1)
+        return length
+
+    def k_shortest_paths(G, source, target, k=1, weight='weight', shortest_path_length=None, detour_ratio=2.0):
+        """Returns the k-shortest paths from source to target in a weighted graph G.
+        
+        Only returns paths that are within the detour ratio of the shortest path.
+
+        Parameters
+        ----------
+        G : NetworkX graph
+        source : node
+            Starting node
+        target : node
+            Ending node
+        k : integer, optional (default=1)
+            The number of shortest paths to find
+        weight: string, optional (default='weight')
+            Edge data key corresponding to the edge weight
+        shortest_path_length: float, optional
+            Length of the shortest path (if None, will be computed)
+        detour_ratio: float, optional (default=2.0)
+            Maximum allowed detour ratio compared to shortest path
+
+        Returns
+        -------
+        lengths, paths : lists
+            Returns a tuple with two lists.
+            The first list stores the length of each k-shortest path.
+            The second list stores each k-shortest path.  
+
+        Raises
+        ------
+        NetworkXNoPath
+            If no path exists between source and target.
+
+        Examples
+        --------
+        >>> G=nx.complete_graph(5)    
+        >>> print(k_shortest_paths(G, 0, 4, 4))
+        ([1, 2, 2, 2], [[0, 4], [0, 1, 4], [0, 2, 4], [0, 3, 4]])
+
+        Notes
+        ------
+        Edge weight attributes must be numerical and non-negative.
+        Distances are calculated as sums of weighted edges traversed.
+        Only paths within detour_ratio * shortest_path_length are returned.
+
+        """
+        if source == target:
+            return ([0], [[source]]) 
+
+        length, path = nx.single_source_dijkstra(G, source, target, weight=weight)
+        if target not in path:
+            raise nx.NetworkXNoPath("node %s not reachable from %s" % (source, target))
+        #print(f"shortest path: {length}")
+
+        # Get shortest path length if not provided
+        if shortest_path_length is None:
+            shortest_path_length = length
+
+        lengths = [shortest_path_length]
+        paths = [path]
+        c = count()        
+        B = []                        
+        G_original = G.copy()
+        while len(paths) < k:
+        #for i in range(1, k):
+            #print(len(paths))
+            for j in range(len(paths[-1]) - 1):
+                spur_node = paths[-1][j]
+                root_path = paths[-1][:j + 1]
+                edges_removed = []
+                for c_path in paths:
+                    if len(c_path) > j and root_path == c_path[:j + 1]:
+                        u = c_path[j]
+                        v = c_path[j + 1]
+                        if G.has_edge(u, v):
+                            edge_attr = G[u][v]
+                            G.remove_edge(u, v)
+                            edges_removed.append((u, v, edge_attr))
+                for n in range(len(root_path) - 1):
+                    node = root_path[n]
+                    # out-edges
+                    edges = list(G.edges(node, data=True))
+                    for u, v, edge_attr in edges:
+                        G.remove_edge(u, v)
+                        edges_removed.append((u, v, edge_attr))
+                    if G.is_directed():
+                        # in-edges
+                        in_edges = list(G.in_edges(node, data=True))
+                        for u, v, edge_attr in in_edges:
+                            G.remove_edge(u, v)
+                            edges_removed.append((u, v, edge_attr))
+                try:
+                    spur_path_length, spur_path = nx.single_source_dijkstra(G, spur_node, target, weight=weight)        
+                    if target in spur_path:
+                        total_path = root_path[:-1] + spur_path
+                        total_path_length = get_path_length(G_original, root_path, weight) + spur_path_length
+                        #print(total_path_length)
+                        # Only add path if it's within detour ratio
+                        if total_path_length <= shortest_path_length * detour_ratio:
+                            heappush(B, (total_path_length, next(c), total_path))
+                except nx.NetworkXNoPath:
+                    pass
+                    
+                for e in edges_removed:
+                    u, v, edge_attr = e
+                    G.add_edge(u, v, **edge_attr)
+            if B:
+                (l, _, p) = heappop(B)
+                # Double-check detour ratio before adding
+                if l <= shortest_path_length * detour_ratio:
+                    lengths.append(l)
+                    paths.append(p)
+                else:
+                    break  # No more valid paths within detour ratio
+            else:
+                break
+        
+        return (lengths, paths)
+
+    # Initialize output dictionaries
+    path_edges = {}
+    distances = {}
+    
+    # Process each destination
+    for d_idx in d_idxs:
+        if d_idx not in od_scope:
+            continue
+        
+        try:
+            # Get k shortest paths for this destination
+            path_lengths, paths = k_shortest_paths(
+                o_graph, 
+                o_idx, 
+                d_idx, 
+                k=k, 
+                weight='weight',
+                shortest_path_length=d_idxs[d_idx],
+                detour_ratio=detour_ratio
+            )
+            
+            # Convert paths to edge lists
+            edge_paths = []
+            for path in paths:
+                edge_path = []
+                for i in range(len(path) - 1):
+                    u, v = path[i], path[i + 1]
+                    # Find the edge ID between these nodes
+                    edge_data = o_graph.get_edge_data(u, v)
+                    if edge_data:
+                        # Assuming edge data contains an 'id' field, adjust as needed
+                        edge_id = edge_data.get('id', f"{u}_{v}")
+                        edge_path.append(edge_id)
+                edge_paths.append(edge_path)
+            
+            # Store results
+            path_edges[d_idx] = deque(edge_paths)
+            distances[d_idx] = deque(path_lengths)
+            
+        except nx.NetworkXNoPath:
+            # No path exists to this destination
+            path_edges[d_idx] = deque()
+            distances[d_idx] = deque()
+        except Exception as e:
+            # Handle other errors gracefully
+            print(f"Error processing destination {d_idx}: {e}")
+            path_edges[d_idx] = deque()
+            distances[d_idx] = deque()
+    
+    return path_edges, distances
+        

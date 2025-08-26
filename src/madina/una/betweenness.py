@@ -25,7 +25,7 @@ from sys import getsizeof
 
 from ..zonal import Zonal
 from ..zonal import Network
-from .paths import path_generator, turn_o_scope, bfs_subgraph_generation, wandering_messenger
+from .paths import path_generator, turn_o_scope, bfs_subgraph_generation, wandering_messenger, yens_k_shortest_paths
 
 def parallel_betweenness(
     network: Network,
@@ -445,6 +445,7 @@ def betweenness_exposure(
         return_path_record=False, 
         destniation_cap=None,
         known_od_id=None,
+        path_cap=None,
 ):
     edge_gdf = self.network.edges
     node_gdf = self.network.nodes
@@ -716,16 +717,30 @@ def betweenness_exposure(
                 for d_idx in d_idx_chunck.keys():
                     d_allowed_distances[d_idx] =  d_idx_chunck[d_idx] * detour_ratio
 
-                path_edges, weights = wandering_messenger(
-                #path_edges, weights = bfs_path_edges_many_targets_iterative(
-                    network=self.network,
-                    o_graph=o_graph,
-                    o_idx=origin_idx,
-                    d_idxs=d_allowed_distances,
-                    distance_matrix=distance_matrix,
-                    turn_penalty=turn_penalty,
-                    od_scope=scope_nodes
-                )
+                if False:
+                #if known_od_id is not None:
+                    path_edges, weights = yens_k_shortest_paths(
+                        network=self.network,
+                        o_graph=o_graph,
+                        o_idx=origin_idx,
+                        d_idxs=d_allowed_distances,
+                        distance_matrix=distance_matrix,
+                        turn_penalty=turn_penalty,
+                        od_scope=scope_nodes,
+                        k=path_cap,
+                        detour_ratio=detour_ratio
+                    )
+                else:
+                    path_edges, weights = wandering_messenger(
+                    #path_edges, weights = bfs_path_edges_many_targets_iterative(
+                        network=self.network,
+                        o_graph=o_graph,
+                        o_idx=origin_idx,
+                        d_idxs=d_allowed_distances,
+                        distance_matrix=distance_matrix,
+                        turn_penalty=turn_penalty,
+                        od_scope=scope_nodes
+                    )
 
                 #Diagnostics
                 chunck_path_count.append(sum([len(dest_paths) for dest_paths in path_edges.values()]))
@@ -928,7 +943,7 @@ def betweenness_exposure(
             del path_edges, weights
             del path_detour_penalties, d_path_weights, path_probabilities, path_decays, destination_path_probabilies, betweennes_contributions
             self.network.remove_node_to_graph(o_graph, origin_idx)
-            print(f"origin_idx: {origin_idx} successful")
+            #print(f"origin_idx: {origin_idx} successful")
             origin_queue.task_done()
         except:
             print (f"CORE: {core_index}: [betweenness_exposure]: error marking task done {origin_idx = } , {len(processed_origins) = }, proceeding to next task")
@@ -958,6 +973,7 @@ def paralell_betweenness_exposure(
     return_path_record=False, 
     destniation_cap=None,
     known_od_id=None,
+    path_cap=None,
     ):
     node_gdf = self.network.nodes
     edge_gdf = self.network.edges
@@ -1016,6 +1032,7 @@ def paralell_betweenness_exposure(
                     return_path_record=return_path_record, 
                     destniation_cap=destniation_cap,
                     known_od_id=known_od_id,
+                    path_cap=path_cap,
                 ))
 
             start = time.time()
