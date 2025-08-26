@@ -578,6 +578,48 @@ def yens_k_shortest_paths(
                 length += G[u][v].get(weight, 1)
         return length
 
+    def dijkstra_with_forbidden(G, source, target, weight='weight', forbidden_edges=None, forbidden_nodes=None):
+        """
+        Run Dijkstra but skip forbidden edges/nodes.
+        Returns (distance, path) or raises nx.NetworkXNoPath.
+        """
+        if forbidden_edges is None:
+            forbidden_edges = set()
+        if forbidden_nodes is None:
+            forbidden_nodes = set()
+
+        if source in forbidden_nodes or target in forbidden_nodes:
+            raise nx.NetworkXNoPath
+
+        dist = {source: 0}
+        pred = {source: None}
+        pq = [(0, source)]
+
+        while pq:
+            d, u = heappop(pq)
+            if u == target:
+                # reconstruct path
+                path = []
+                while u is not None:
+                    path.append(u)
+                    u = pred[u]
+                return d, list(reversed(path))
+
+            if d > dist[u]:
+                continue  # outdated entry
+
+            for v, attr in G[u].items():
+                if (u, v) in forbidden_edges or v in forbidden_nodes:
+                    continue
+                w = attr.get(weight, 1)
+                nd = d + w
+                if nd < dist.get(v, float('inf')):
+                    dist[v] = nd
+                    pred[v] = u
+                    heappush(pq, (nd, v))
+
+        raise nx.NetworkXNoPath
+
     def k_shortest_paths(G, source, target, k=1, weight='weight', shortest_path_length=None, detour_ratio=2.0):
         """Returns the k-shortest paths from source to target in a weighted graph G.
         
@@ -647,30 +689,23 @@ def yens_k_shortest_paths(
             for j in range(len(paths[-1]) - 1):
                 spur_node = paths[-1][j]
                 root_path = paths[-1][:j + 1]
-                edges_removed = []
+
+                # Build forbidden sets instead of mutating the graph
+                forbidden_edges = set()
+                forbidden_nodes = set()
+
                 for c_path in paths:
                     if len(c_path) > j and root_path == c_path[:j + 1]:
-                        u = c_path[j]
-                        v = c_path[j + 1]
-                        if G.has_edge(u, v):
-                            edge_attr = G[u][v]
-                            G.remove_edge(u, v)
-                            edges_removed.append((u, v, edge_attr))
-                for n in range(len(root_path) - 1):
-                    node = root_path[n]
-                    # out-edges
-                    edges = list(G.edges(node, data=True))
-                    for u, v, edge_attr in edges:
-                        G.remove_edge(u, v)
-                        edges_removed.append((u, v, edge_attr))
-                    if G.is_directed():
-                        # in-edges
-                        in_edges = list(G.in_edges(node, data=True))
-                        for u, v, edge_attr in in_edges:
-                            G.remove_edge(u, v)
-                            edges_removed.append((u, v, edge_attr))
+                        forbidden_edges.add((c_path[j], c_path[j + 1]))
+                
+                # 2. Remove all edges *from* root_path nodes except spur_node
+                forbidden_nodes.update(root_path[:-1])
+
                 try:
-                    spur_path_length, spur_path = nx.single_source_dijkstra(G, spur_node, target, weight=weight)        
+                    spur_path_length, spur_path = dijkstra_with_forbidden(
+                        G_original, spur_node, target, weight=weight,
+                        forbidden_edges=forbidden_edges, forbidden_nodes=forbidden_nodes
+                    )
                     if target in spur_path:
                         total_path = root_path[:-1] + spur_path
                         total_path_length = get_path_length(G_original, root_path, weight) + spur_path_length
@@ -681,9 +716,6 @@ def yens_k_shortest_paths(
                 except nx.NetworkXNoPath:
                     pass
                     
-                for e in edges_removed:
-                    u, v, edge_attr = e
-                    G.add_edge(u, v, **edge_attr)
             if B:
                 (l, _, p) = heappop(B)
                 # Double-check detour ratio before adding
