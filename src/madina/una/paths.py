@@ -4,6 +4,7 @@ from heapq import heappush, heappop
 from ..zonal import Network
 from itertools import count
 import networkx as nx
+import time
 
 
 def path_generator(network: Network, o_idx, search_radius=800, detour_ratio=1.15, turn_penalty=False):
@@ -567,7 +568,7 @@ def yens_k_shortest_paths(
         path_edges: dict[d_idx] = deque of edge-id lists for each path
         distances: dict[d_idx] = deque of path weights
     """
-    
+
     def get_path_length(G, path, weight='weight'):
         """Calculate the total length of a path in the graph."""
         length = 0
@@ -620,7 +621,7 @@ def yens_k_shortest_paths(
 
         raise nx.NetworkXNoPath
 
-    def k_shortest_paths(G, source, target, k=1, weight='weight', shortest_path_length=None, detour_ratio=2.0):
+    def k_shortest_paths(G, source, target, k=1, weight='weight', longest_allowed_path=None, detour_ratio=2.0):
         """Returns the k-shortest paths from source to target in a weighted graph G.
         
         Only returns paths that are within the detour ratio of the shortest path.
@@ -636,8 +637,8 @@ def yens_k_shortest_paths(
             The number of shortest paths to find
         weight: string, optional (default='weight')
             Edge data key corresponding to the edge weight
-        shortest_path_length: float, optional
-            Length of the shortest path (if None, will be computed)
+        longest_allowed_path: float
+            Length of the longest allowed path
         detour_ratio: float, optional (default=2.0)
             Maximum allowed detour ratio compared to shortest path
 
@@ -663,7 +664,7 @@ def yens_k_shortest_paths(
         ------
         Edge weight attributes must be numerical and non-negative.
         Distances are calculated as sums of weighted edges traversed.
-        Only paths within detour_ratio * shortest_path_length are returned.
+        Only paths within longest_allowed_path are returned.
 
         """
         if source == target:
@@ -672,20 +673,19 @@ def yens_k_shortest_paths(
         length, path = nx.single_source_dijkstra(G, source, target, weight=weight)
         if target not in path:
             raise nx.NetworkXNoPath("node %s not reachable from %s" % (source, target))
-        #print(f"shortest path: {length}")
 
-        # Get shortest path length if not provided
-        if shortest_path_length is None:
-            shortest_path_length = length
-
-        lengths = [shortest_path_length]
+        lengths = [length]
         paths = [path]
         c = count()        
         B = []                        
         G_original = G.copy()
+        # Cache node coordinates for A* heuristic to avoid repeated DataFrame access
+        try:
+            _coords_cache = {n: tuple(network.nodes.at[n, "geometry"].coords[0]) for n in G_original.nodes}
+        except Exception:
+            _coords_cache = {}
+ 
         while len(paths) < k:
-        #for i in range(1, k):
-            #print(len(paths))
             for j in range(len(paths[-1]) - 1):
                 spur_node = paths[-1][j]
                 root_path = paths[-1][:j + 1]
@@ -702,24 +702,54 @@ def yens_k_shortest_paths(
                 forbidden_nodes.update(root_path[:-1])
 
                 try:
-                    spur_path_length, spur_path = dijkstra_with_forbidden(
-                        G_original, spur_node, target, weight=weight,
-                        forbidden_edges=forbidden_edges, forbidden_nodes=forbidden_nodes
+                    def _euclidean_heuristic(u, v):
+                        if _coords_cache:
+                            ux, uy = _coords_cache[u]
+                            vx, vy = _coords_cache[v]
+                        else:
+                            gu = network.nodes.at[u, "geometry"]
+                            gv = network.nodes.at[v, "geometry"]
+                            (ux, uy) = gu.coords[0]
+                            (vx, vy) = gv.coords[0]
+                        dx = ux - vx
+                        dy = uy - vy
+                        return (dx * dx + dy * dy) ** 0.5
+
+                    # Quick bound check: if even the optimistic distance exceeds remaining budget, skip
+                    root_path_length = get_path_length(G_original, root_path, weight)
+                    remaining_budget = longest_allowed_path - root_path_length
+                    if _euclidean_heuristic(spur_node, target) > remaining_budget:
+                        raise nx.NetworkXNoPath
+
+                    # Build a subgraph view that hides forbidden nodes/edges for faster A*
+                    H = nx.subgraph_view(
+                        G_original,
+                        filter_node=lambda n: n not in forbidden_nodes,
+                        filter_edge=lambda u, v: (u, v) not in forbidden_edges,
                     )
+
+                    spur_path = nx.astar_path(
+                        H,
+                        spur_node,
+                        target,
+                        heuristic=_euclidean_heuristic,
+                        weight=weight,
+                    )
+                    spur_path_length = get_path_length(G_original, spur_path, weight)
                     if target in spur_path:
                         total_path = root_path[:-1] + spur_path
-                        total_path_length = get_path_length(G_original, root_path, weight) + spur_path_length
+                        total_path_length = root_path_length + spur_path_length
                         #print(total_path_length)
                         # Only add path if it's within detour ratio
-                        if total_path_length <= shortest_path_length * detour_ratio:
+                        if total_path_length <= longest_allowed_path:
                             heappush(B, (total_path_length, next(c), total_path))
                 except nx.NetworkXNoPath:
                     pass
-                    
+
             if B:
                 (l, _, p) = heappop(B)
                 # Double-check detour ratio before adding
-                if l <= shortest_path_length * detour_ratio:
+                if l <= longest_allowed_path:
                     lengths.append(l)
                     paths.append(p)
                 else:
@@ -737,7 +767,10 @@ def yens_k_shortest_paths(
     for d_idx in d_idxs:
         if d_idx not in od_scope:
             continue
-        
+
+        # print(d_idx)
+        # print(d_idxs[d_idx])
+
         try:
             # Get k shortest paths for this destination
             path_lengths, paths = k_shortest_paths(
@@ -746,7 +779,7 @@ def yens_k_shortest_paths(
                 d_idx, 
                 k=k, 
                 weight='weight',
-                shortest_path_length=d_idxs[d_idx],
+                longest_allowed_path=d_idxs[d_idx],
                 detour_ratio=detour_ratio
             )
             

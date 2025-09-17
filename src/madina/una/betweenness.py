@@ -717,8 +717,7 @@ def betweenness_exposure(
                 for d_idx in d_idx_chunck.keys():
                     d_allowed_distances[d_idx] =  d_idx_chunck[d_idx] * detour_ratio
 
-                if False:
-                #if known_od_id is not None:
+                if known_od_id is not None:
                     path_edges, weights = yens_k_shortest_paths(
                         network=self.network,
                         o_graph=o_graph,
