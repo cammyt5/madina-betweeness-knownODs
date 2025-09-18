@@ -60,15 +60,22 @@ def run_test_with_user_data(data_folder, pairings_file, base_output_folder):
         traceback.print_exc()
 
 if __name__ == "__main__":
-    # 1. Provide the absolute or relative path to the folder containing your data.
-    #    This folder should contain your network, origins, and destinations GeoJSONs.
-    DATA_FOLDER_PATH = "C:/Users/camer/Documents/UG Thesis/data/trip data/termini flows/Madina Notebooks/Cities/Hamilton/data"
+    # 1. Build paths relative to this file's directory so they work regardless of CWD.
+    from pathlib import Path
+
+    this_file = Path(__file__).resolve()
+    tests_dir = this_file.parent  # .../tests/unit_testing
+    # Go up three levels to reach the folder that contains "Madina Notebooks" alongside this repo
+    project_sibling_root = tests_dir.parents[2]  # .../termini flows
+
+    # Data and output targets
+    DATA_FOLDER_PATH = str(project_sibling_root / "Madina Notebooks/Cities/Hamilton/data")
 
     # 2. Provide the name of your pairings file, which must be inside the data folder.
     PAIRINGS_FILENAME = "pairings.csv"
 
     # 3. Provide a path for the base output folder. A new timestamped subfolder will be created inside it for each run.
-    OUTPUT_FOLDER_PATH = "C:/Users/camer/Documents/UG Thesis/data/trip data/termini flows/Madina Notebooks/Cities/Hamilton/Simulations"
+    OUTPUT_FOLDER_PATH = str(project_sibling_root / "Madina Notebooks/Cities/Hamilton/Simulations")
     
     # =================================================================================
 
@@ -76,4 +83,4 @@ if __name__ == "__main__":
         data_folder=DATA_FOLDER_PATH,
         pairings_file=PAIRINGS_FILENAME,
         base_output_folder=OUTPUT_FOLDER_PATH
-    ) 
+    )
